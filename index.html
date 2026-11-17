@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Makmal Warna Ajaib - Sains & PSV Tahun 2</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Fredoka (sesuai untuk kanak-kanak) -->
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Tone.js untuk Muzik Latar & Kesan Bunyi -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Fredoka', sans-serif;
+            overflow: hidden;
+            user-select: none;
+            background-color: #1e1b4b;
+        }
+
+        /* Kesan cermin pada video dan kanvas supaya selari dengan pergerakan pemain */
+        .mirror-canvas {
+            transform: scaleX(-1);
+        }
+
+        /* Animasi timbul & melantun */
+        @keyframes bounceSlow {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-8px); }
+        }
+        .animate-bounce-slow {
+            animation: bounceSlow 2.5s infinite ease-in-out;
+        }
+
+        @keyframes popIn {
+            0% { transform: scale(0.5); opacity: 0; }
+            80% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-pop-in {
+            animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        /* Butang gaya permainan kanak-kanak */
+        .game-btn {
+            transition: all 0.15s ease;
+            box-shadow: 0 6px 0 rgba(0,0,0,0.25);
+        }
+        .game-btn:active {
+            transform: translateY(4px);
+            box-shadow: 0 2px 0 rgba(0,0,0,0.25);
+        }
+
+        /* Kaca lutsinar bergaya */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(12px);
+            border: 4px solid #ffffff;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+<body class="w-screen h-screen relative flex items-center justify-center">
+
+    <!-- Elemen Video Tersembunyi untuk Webcam -->
+    <video id="input_video" class="hidden" playsinline></video>
+
+    <!-- Kanvas Utama Permainan (Latar Belakang Webcam + Jejak Cat + Elemen Interaktif) -->
+    <canvas id="game_canvas" class="absolute inset-0 w-full h-full object-cover z-0"></canvas>
+
+    <!-- HUD (Heads-Up Display) Semasa Bermain -->
+    <div id="hud_layer" class="hidden absolute inset-0 pointer-events-none z-10 flex flex-col justify-between p-3 sm:p-6">
+        
+        <!-- Bahagian Atas: Pemasa, Kanvas Sasaran & Skor -->
+        <div class="flex flex-wrap items-start justify-between gap-2 w-full">
+            
+            <!-- Kotak Pemasa -->
+            <div class="glass-panel rounded-3xl px-4 py-2 sm:px-6 sm:py-3 flex items-center gap-3 pointer-events-auto">
+                <div class="text-2xl sm:text-3xl">⏱️</div>
+                <div>
+                    <div class="text-xs sm:text-sm font-bold text-indigo-500 uppercase tracking-wider">Masa</div>
+                    <div id="timer_display" class="text-2xl sm:text-4xl font-bold text-indigo-950">60s</div>
+                </div>
+            </div>
+
+            <!-- Kanvas Sasaran Lukisan (Permintaan Warna Sekunder) -->
+            <div class="glass-panel rounded-3xl px-5 py-3 sm:px-8 sm:py-4 flex flex-col items-center text-center max-w-md mx-auto border-4 border-yellow-400 shadow-xl">
+                <span class="text-xs sm:text-sm font-bold text-purple-600 uppercase tracking-widest mb-1">🎨 Misi Kanvas Lukisan</span>
+                <div class="flex items-center gap-3">
+                    <div id="target_swatch" class="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-4 border-white shadow-inner transition-colors duration-300" style="background-color: #FF8C00;"></div>
+                    <div class="text-left">
+                        <div class="text-sm sm:text-base text-gray-600 font-semibold">Hasilkan Warna:</div>
+                        <div id="target_name" class="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-wide">JINGGA</div>
+                    </div>
+                </div>
+                <div id="target_hint" class="mt-1 text-xs sm:text-sm font-semibold text-indigo-700 bg-indigo-100 px-3 py-0.5 rounded-full">
+                    Tip: Campurkan Merah + Kuning
+                </div>
+            </div>
+
+            <!-- Kotak Skor Bintang & Kawalan Audio -->
+            <div class="flex items-center gap-2 pointer-events-auto">
+                <div class="glass-panel rounded-3xl px-4 py-2 sm:px-6 sm:py-3 flex items-center gap-3">
+                    <div class="text-2xl sm:text-3xl animate-pulse">⭐</div>
+                    <div>
+                        <div class="text-xs sm:text-sm font-bold text-amber-600 uppercase tracking-wider">Bintang</div>
+                        <div id="score_display" class="text-2xl sm:text-4xl font-bold text-amber-500">0</div>
+                    </div>
+                </div>
+
+                <!-- Butang Bunyi -->
+                <button id="mute_btn" onclick="toggleAudio()" class="glass-panel rounded-2xl p-3 sm:p-4 text-2xl hover:bg-white transition cursor-pointer" title="Pasang/Tutup Muzik">
+                    🔊
+                </button>
+            </div>
+        </div>
+
+        <!-- Bahagian Bawah: Petunjuk Visual Status Tangan -->
+        <div class="flex justify-center items-end w-full pb-2">
+            <div class="glass-panel rounded-full px-5 py-2 flex items-center gap-4 text-sm sm:text-base font-bold text-gray-800 shadow-lg">
+                <div class="flex items-center gap-2">
+                    <span class="inline-block w-4 h-4 rounded-full border-2 border-gray-400" id="left_hand_dot" style="background:#eee;"></span>
+                    <span>Tangan Kiri: <span id="left_color_label" class="text-gray-500">Tiada Warna</span></span>
+                </div>
+                <span class="text-gray-400">|</span>
+                <div class="flex items-center gap-2">
+                    <span class="inline-block w-4 h-4 rounded-full border-2 border-gray-400" id="right_hand_dot" style="background:#eee;"></span>
+                    <span>Tangan Kanan: <span id="right_color_label" class="text-gray-500">Tiada Warna</span></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SKRIN MULA (Start Screen) -->
+    <div id="start_screen" class="absolute inset-0 z-20 flex items-center justify-center p-4 bg-indigo-950/75 backdrop-blur-md">
+        <div class="glass-panel rounded-3xl max-w-2xl w-full p-6 sm:p-10 text-center animate-pop-in">
+            <div class="inline-block bg-yellow-300 text-yellow-900 font-bold px-4 py-1 rounded-full text-sm mb-3 shadow-sm">
+                Pendidikan Seni Visual & Sains • Tahun 2
+            </div>
+            <h1 class="text-4xl sm:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-red-500 via-yellow-500 to-blue-600 mb-3 drop-shadow-sm">
+                Makmal Warna Ajaib 🎨
+            </h1>
+            <p class="text-gray-700 text-base sm:text-lg mb-6 font-medium leading-relaxed">
+                Gunakan <strong>kedua-dua jari telunjuk</strong> (kiri & kanan) di hadapan kamera sebagai berus lukisan! Sentuh titisan warna asas dan <strong>cantumkan kedua-dua jari di tengah skrin</strong> untuk mencipta warna sekunder!
+            </p>
+
+            <!-- Panduan Warna Asas -> Sekunder -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6 text-sm font-bold">
+                <div class="bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 flex flex-col items-center">
+                    <div class="flex items-center gap-1 mb-1">
+                        <span class="w-5 h-5 rounded-full bg-red-600 inline-block"></span> + 
+                        <span class="w-5 h-5 rounded-full bg-yellow-400 inline-block"></span> = 
+                        <span class="w-6 h-6 rounded-full bg-orange-500 inline-block shadow"></span>
+                    </div>
+                    <span class="text-orange-800">Merah + Kuning = JINGGA</span>
+                </div>
+                <div class="bg-green-50 border-2 border-green-200 rounded-2xl p-3 flex flex-col items-center">
+                    <div class="flex items-center gap-1 mb-1">
+                        <span class="w-5 h-5 rounded-full bg-blue-600 inline-block"></span> + 
+                        <span class="w-5 h-5 rounded-full bg-yellow-400 inline-block"></span> = 
+                        <span class="w-6 h-6 rounded-full bg-green-600 inline-block shadow"></span>
+                    </div>
+                    <span class="text-green-800">Biru + Kuning = HIJAU</span>
+                </div>
+                <div class="bg-purple-50 border-2 border-purple-200 rounded-2xl p-3 flex flex-col items-center">
+                    <div class="flex items-center gap-1 mb-1">
+                        <span class="w-5 h-5 rounded-full bg-red-600 inline-block"></span> + 
+                        <span class="w-5 h-5 rounded-full bg-blue-600 inline-block"></span> = 
+                        <span class="w-6 h-6 rounded-full bg-purple-600 inline-block shadow"></span>
+                    </div>
+                    <span class="text-purple-800">Merah + Biru = UNGU</span>
+                </div>
+            </div>
+
+            <!-- Status Pemuatan Kamera / MediaPipe -->
+            <div id="loading_status" class="mb-6 flex flex-col items-center justify-center">
+                <div class="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                <p id="status_text" class="text-indigo-800 font-semibold text-sm">Menyediakan Kamera & Pengesan Jari AI...</p>
+            </div>
+
+            <!-- Butang Mula & Mod Tetikus (Fallback jika tiada kamera) -->
+            <div class="flex flex-col sm:flex-row gap-3 justify-center">
+                <button id="start_btn" disabled onclick="startGame(false)" class="game-btn bg-gradient-to-r from-green-500 to-emerald-600 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold text-xl px-8 py-4 rounded-2xl cursor-pointer disabled:cursor-not-allowed">
+                    🚀 Mula Bermain (Kamera)
+                </button>
+                <button id="demo_btn" onclick="startGame(true)" class="game-btn bg-indigo-100 hover:bg-indigo-200 text-indigo-800 font-bold text-base px-5 py-4 rounded-2xl cursor-pointer">
+                    🖱️ Mod Simulasi (Tanpa Kamera)
+                </button>
+            </div>
+            <p id="camera_error_msg" class="hidden text-red-600 text-xs font-semibold mt-3"></p>
+        </div>
+    </div>
+
+    <!-- SKRIN TAMAT & GALERI HASIL CAMPURAN (End Screen) -->
+    <div id="end_screen" class="hidden absolute inset-0 z-30 flex items-center justify-center p-4 bg-indigo-950/85 backdrop-blur-md overflow-y-auto">
+        <div class="glass-panel rounded-3xl max-w-3xl w-full p-6 sm:p-8 text-center animate-pop-in my-auto">
+            <div class="text-5xl mb-2">🏆🎨✨</div>
+            <h2 class="text-3xl sm:text-4xl font-extrabold text-indigo-950 mb-1">Masa Tamat! Syabas!</h2>
+            <p class="text-gray-600 font-medium mb-4">Kamu telah berjaya menjadi Ahli Kimia Warna yang hebat!</p>
+
+            <!-- Paparan Bintang Akhir -->
+            <div class="bg-amber-100 border-2 border-amber-300 rounded-2xl py-3 px-6 inline-flex items-center gap-3 mb-6">
+                <span class="text-3xl">⭐</span>
+                <div class="text-left">
+                    <div class="text-xs font-bold text-amber-800 uppercase">Jumlah Bintang Dikumpul</div>
+                    <div id="final_score" class="text-3xl font-extrabold text-amber-600">0 Bintang</div>
+                </div>
+            </div>
+
+            <!-- Galeri Hasil Campuran -->
+            <div class="text-left mb-6">
+                <h3 class="text-lg font-bold text-indigo-900 mb-3 flex items-center gap-2">
+                    <span>🖼️ Galeri Hasil Campuran Kamu</span>
+                    <span id="gallery_count" class="text-xs bg-indigo-600 text-white px-2.5 py-0.5 rounded-full">0 Karya</span>
+                </h3>
+                
+                <div id="gallery_grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-60 overflow-y-auto p-2 bg-indigo-50/70 rounded-2xl border-2 border-indigo-100">
+                    <!-- Kad hasil karya akan dimasukkan melalui JS -->
+                </div>
+            </div>
+
+            <button onclick="resetAndStart()" class="game-btn bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xl px-10 py-4 rounded-2xl cursor-pointer">
+                🔄 Main Semula
+            </button>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ============================================================================
+         * 1. KONFIGURASI WARNA ASAS & SEKUNDER (KURIKULUM TAHUN 2)
+         * ============================================================================
+         */
+        const PRIMARY_COLORS = {
+            MERAH: {
+                id: 'MERAH',
+                name: 'Merah',
+                hex: '#EF4444',
+                rgb: [239, 68, 68],
+                glow: 'rgba(239, 68, 68, 0.6)'
+            },
+            KUNING: {
+                id: 'KUNING',
+                name: 'Kuning',
+                hex: '#FACC15',
+                rgb: [250, 204, 21],
+                glow: 'rgba(250, 204, 21, 0.6)'
+            },
+            BIRU: {
+                id: 'BIRU',
+                name: 'Biru',
+                hex: '#3B82F6',
+                rgb: [59, 130, 246],
+                glow: 'rgba(59, 130, 246, 0.6)'
+            }
+        };
+
+        const SECONDARY_COLORS = [
+            {
+                id: 'JINGGA',
+                name: 'JINGGA',
+                hex: '#F97316',
+                rgb: [249, 115, 22],
+                recipe: ['MERAH', 'KUNING'],
+                hint: 'Merah + Kuning = Jingga'
+            },
+            {
+                id: 'HIJAU',
+                name: 'HIJAU',
+                hex: '#22C55E',
+                rgb: [34, 197, 94],
+                recipe: ['BIRU', 'KUNING'],
+                hint: 'Biru + Kuning = Hijau'
+            },
+            {
+                id: 'UNGU',
+                name: 'UNGU',
+                hex: '#A855F7',
+                rgb: [168, 85, 247],
+                recipe: ['MERAH', 'BIRU'],
+                hint: 'Merah + Biru = Ungu'
+            }
+        ];
+
+        /**
+         * ============================================================================
+         * 2. KEADAAN PERMAINAN (GAME STATE) & PEMBOLEHUBAH KANVAS
+         * ============================================================================
+         */
+        const videoElement = document.getElementById('input_video');
+        const canvas = document.getElementById('game_canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Kanvas luar skrin (offscreen) untuk mengekalkan jejak cat air secara berterusan
+        const paintCanvas = document.createElement('canvas');
+        const paintCtx = paintCanvas.getContext('2d');
+
+        let gameState = {
+            isPlaying: false,
+            isDemoMode: false,
+            cameraReady: false,
+            score: 0,
+            timeLeft: 60,
+            timerInterval: null,
+            currentTarget: SECONDARY_COLORS[0],
+            gallery: [], // Menyimpan rekod hasil campuran berjaya
+            mixCooldown: 0,
+            pulsePhase: 0
+        };
+
+        // Kedudukan dan warna semasa dua jari telunjuk (Indeks 0: Tangan Kiri, Indeks 1: Tangan Kanan)
+        let handsData = [
+            { active: false, x: 0, y: 0, prevX: 0, prevY: 0, color: null, label: 'Kiri' },
+            { active: false, x: 0, y: 0, prevX: 0, prevY: 0, color: null, label: 'Kanan' }
+        ];
+
+        // Titisan warna asas yang terapung di skrin
+        let droplets = [];
+
+        // Zarah percikan warna-warni (particles) & teks terapung
+        let particles = [];
+        let floatingTexts = [];
+
+        /**
+         * ============================================================================
+         * 3. SISTEM AUDIO CERIA & KESAN BUNYI (TONE.JS - TIADA FAIL LUAR)
+         * ============================================================================
+         */
+        let isMuted = false;
+        let bgmLoop = null;
+        let synth = null;
+        let polySynth = null;
+
+        function initAudio() {
+            if (synth) return;
+            try {
+                // Synthesizer utama untuk melodi & kesan bunyi
+                synth = new Tone.Synth({
+                    oscillator: { type: 'triangle' },
+                    envelope: { attack: 0.02, decay: 0.1, sustain: 0.2, release: 0.4 }
+                }).toDestination();
+                synth.volume.value = -8;
+
+                polySynth = new Tone.PolySynth(Tone.Synth, {
+                    oscillator: { type: 'sine' },
+                    envelope: { attack: 0.05, decay: 0.2, sustain: 0.3, release: 0.8 }
+                }).toDestination();
+                polySynth.volume.value = -10;
+
+                // Melodi latar ceria kanak-kanak (Pentatonik C Major)
+                const notes = [
+                    'C5', 'E5', 'G5', 'E5', 'A5', 'G5', 'E5', 'D5',
+                    'C5', 'D5', 'E5', 'G5', 'E5', 'D5', 'C5', null
+                ];
+                let noteIndex = 0;
+
+                bgmLoop = new Tone.Loop((time) => {
+                    if (!isMuted && gameState.isPlaying) {
+                        const note = notes[noteIndex % notes.length];
+                        if (note) {
+                            synth.triggerAttackRelease(note, '8n', time);
+                        }
+                        noteIndex++;
+                    }
+                }, '4n');
+
+                Tone.Transport.bpm.value = 135;
+            } catch (e) {
+                console.warn('Audio tidak dapat dimulakan:', e);
+            }
+        }
+
+        function toggleAudio() {
+            isMuted = !isMuted;
+            document.getElementById('mute_btn').innerText = isMuted ? '🔇' : '🔊';
+            if (isMuted) {
+                Tone.Destination.mute = true;
+            } else {
+                Tone.Destination.mute = false;
+            }
+        }
+
+        function playPickupSound() {
+            if (isMuted || !polySynth) return;
+            polySynth.triggerAttackRelease(['G5', 'C6'], '16n');
+        }
+
+        function playSuccessSound() {
+            if (isMuted || !polySynth) return;
+            const now = Tone.now();
+            polySynth.triggerAttackRelease(['C5', 'E5', 'G5'], '8n', now);
+            polySynth.triggerAttackRelease(['E5', 'G5', 'C6'], '4n', now + 0.12);
+        }
+
+        function playWrongMixSound() {
+            if (isMuted || !synth) return;
+            synth.triggerAttackRelease('F3', '8n');
+        }
+
+        /**
+         * ============================================================================
+         * 4. PENGURUSAN SAIZ KANVAS & TITISAN WARNA ASAS
+         * ============================================================================
+         */
+        function resizeCanvases() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            canvas.width = w;
+            canvas.height = h;
+            paintCanvas.width = w;
+            paintCanvas.height = h;
+            setupDroplets();
+        }
+        window.addEventListener('resize', resizeCanvases);
+
+        // Susun 6 titisan warna asas di bahagian kiri dan kanan skrin supaya mudah dicapai kedua-dua tangan
+        function setupDroplets() {
+            const w = canvas.width;
+            const h = canvas.height;
+            const radius = Math.max(36, Math.min(w, h) * 0.055);
+
+            droplets = [
+                // Bahagian Kiri (Untuk Tangan Kiri)
+                { x: w * 0.14, y: h * 0.30, radius, color: PRIMARY_COLORS.MERAH, bobOffset: 0 },
+                { x: w * 0.11, y: h * 0.52, radius, color: PRIMARY_COLORS.KUNING, bobOffset: 1.5 },
+                { x: w * 0.14, y: h * 0.74, radius, color: PRIMARY_COLORS.BIRU, bobOffset: 3.0 },
+
+                // Bahagian Kanan (Untuk Tangan Kanan)
+                { x: w * 0.86, y: h * 0.30, radius, color: PRIMARY_COLORS.MERAH, bobOffset: 0.8 },
+                { x: w * 0.89, y: h * 0.52, radius, color: PRIMARY_COLORS.KUNING, bobOffset: 2.2 },
+                { x: w * 0.86, y: h * 0.74, radius, color: PRIMARY_COLORS.BIRU, bobOffset: 3.8 }
+            ];
+        }
+
+        /**
+         * ============================================================================
+         * 5. INTEGRASI GOOGLE MEDIAPIPE HANDS (PENJEJAKAN 2 JARI TELUNJUK)
+         * ============================================================================
+         */
+        function initMediaPipe() {
+            const statusText = document.getElementById('status_text');
+            const startBtn = document.getElementById('start_btn');
+            const loadingDiv = document.getElementById('loading_status');
+            const errorMsg = document.getElementById('camera_error_msg');
+
+            try {
+                const hands = new Hands({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                });
+
+                hands.setOptions({
+                    maxNumHands: 2,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.65,
+                    minTrackingConfidence: 0.6
+                });
+
+                hands.onResults(onHandsResults);
+
+                const camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        if (!gameState.isDemoMode) {
+                            await hands.send({ image: videoElement });
+                        }
+                    },
+                    width: 1280,
+                    height: 720
+                });
+
+                camera.start()
+                    .then(() => {
+                        gameState.cameraReady = true;
+                        loadingDiv.classList.add('hidden');
+                        startBtn.disabled = false;
+                    })
+                    .catch((err) => {
+                        console.warn('Kamera gagal diakses:', err);
+                        loadingDiv.classList.add('hidden');
+                        errorMsg.innerText = 'Kamera tidak ditemui atau kebenaran ditolak. Sila gunakan "Mod Simulasi (Tanpa Kamera)".';
+                        errorMsg.classList.remove('hidden');
+                    });
+            } catch (e) {
+                loadingDiv.classList.add('hidden');
+                errorMsg.innerText = 'Ralat memuatkan MediaPipe. Gunakan Mod Simulasi.';
+                errorMsg.classList.remove('hidden');
+            }
+        }
+
+        // Pemprosesan koordinat 21 titik sendi tangan daripada MediaPipe
+        function onHandsResults(results) {
+            if (gameState.isDemoMode) return;
+
+            // Reset status aktif sementara
+            let detectedLeft = false;
+            let detectedRight = false;
+
+            if (results.multiHandLandmarks && results.multiHandedness) {
+                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                    const landmarks = results.multiHandLandmarks[i];
+                    const handedness = results.multiHandedness[i];
+
+                    // Titik 8 ialah hujung jari telunjuk (INDEX_FINGER_TIP)
+                    const indexTip = landmarks[8];
+
+                    // Cerminkan koordinat X (1 - x) supaya selari dengan paparan cermin pengguna
+                    const screenX = (1 - indexTip.x) * canvas.width;
+                    const screenY = indexTip.y * canvas.height;
+
+                    // Tentukan slot tangan (Kiri atau Kanan pada skrin)
+                    // Disebabkan imej dicerminkan, label 'Right' MediaPipe biasanya di sebelah kiri skrin atau kita boleh bahagikan mengikut label handedness
+                    const isLeftSlot = (handedness.label === 'Right'); // Dalam paparan selfie cermin, tangan kiri pengguna dikesan sebagai 'Right' oleh MediaPipe
+                    const slotIdx = isLeftSlot ? 0 : 1;
+
+                    const hand = handsData[slotIdx];
+                    if (!hand.active) {
+                        hand.prevX = screenX;
+                        hand.prevY = screenY;
+                    } else {
+                        hand.prevX = hand.x;
+                        hand.prevY = hand.y;
+                    }
+                    hand.x = screenX;
+                    hand.y = screenY;
+                    hand.active = true;
+
+                    if (slotIdx === 0) detectedLeft = true;
+                    if (slotIdx === 1) detectedRight = true;
+                }
+            }
+
+            if (!detectedLeft) handsData[0].active = false;
+            if (!detectedRight) handsData[1].active = false;
+        }
+
+        /**
+         * ============================================================================
+         * 6. MOD SIMULASI TETIKUS / SENTUHAN (JIKA TIADA WEBCAM)
+         * ============================================================================
+         */
+        function setupDemoControls() {
+            // Dalam mod demo, tetikus mengawal Tangan Kanan, manakala Tangan Kiri bergerak secara cermin/simetri
+            // atau pemain boleh klik pada titisan untuk menukar warna kedua-dua tangan
+            canvas.addEventListener('mousemove', (e) => {
+                if (!gameState.isDemoMode || !gameState.isPlaying) return;
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+
+                // Tangan Kanan ikut kursor
+                updateDemoHand(1, mx, my);
+                // Tangan Kiri bergerak simetri di seberang skrin supaya boleh dicantum di tengah!
+                updateDemoHand(0, canvas.width - mx, my);
+            });
+
+            canvas.addEventListener('touchmove', (e) => {
+                if (!gameState.isDemoMode || !gameState.isPlaying) return;
+                const touch = e.touches[0];
+                const mx = touch.clientX;
+                const my = touch.clientY;
+                updateDemoHand(1, mx, my);
+                updateDemoHand(0, canvas.width - mx, my);
+            }, { passive: true });
+        }
+
+        function updateDemoHand(idx, x, y) {
+            const hand = handsData[idx];
+            if (!hand.active) {
+                hand.prevX = x;
+                hand.prevY = y;
+            } else {
+                hand.prevX = hand.x;
+                hand.prevY = hand.y;
+            }
+            hand.x = x;
+            hand.y = y;
+            hand.active = true;
+        }
+
+        /**
+         * ============================================================================
+         * 7. LOGIK PERMAINAN: MULA, MISI, CAMPURAN WARNA & TAMAT
+         * ============================================================================
+         */
+        async function startGame(demoMode = false) {
+            await Tone.start();
+            initAudio();
+            if (bgmLoop && Tone.Transport.state !== 'started') {
+                Tone.Transport.start();
+                bgmLoop.start(0);
+            }
+
+            gameState.isDemoMode = demoMode;
+            gameState.isPlaying = true;
+            gameState.score = 0;
+            gameState.timeLeft = 60;
+            gameState.gallery = [];
+            gameState.mixCooldown = 0;
+
+            handsData[0].color = null;
+            handsData[1].color = null;
+            particles = [];
+            floatingTexts = [];
+            paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+
+            document.getElementById('start_screen').classList.add('hidden');
+            document.getElementById('end_screen').classList.add('hidden');
+            document.getElementById('hud_layer').classList.remove('hidden');
+
+            updateScoreUI();
+            updateHandsHUD();
+            pickNewTarget();
+
+            clearInterval(gameState.timerInterval);
+            gameState.timerInterval = setInterval(() => {
+                gameState.timeLeft--;
+                const timerEl = document.getElementById('timer_display');
+                timerEl.innerText = `${gameState.timeLeft}s`;
+                if (gameState.timeLeft <= 10) {
+                    timerEl.classList.add('text-red-600', 'animate-ping');
+                } else {
+                    timerEl.classList.remove('text-red-600', 'animate-ping');
+                }
+
+                if (gameState.timeLeft <= 0) {
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function resetAndStart() {
+            startGame(gameState.isDemoMode);
+        }
+
+        function pickNewTarget() {
+            // Pilih warna sekunder secara rawak (elak ulang yang sama berturut-turut jika boleh)
+            const candidates = SECONDARY_COLORS.filter(c => c.id !== gameState.currentTarget.id);
+            const next = candidates[Math.floor(Math.random() * candidates.length)];
+            gameState.currentTarget = next;
+
+            document.getElementById('target_swatch').style.backgroundColor = next.hex;
+            document.getElementById('target_name').innerText = next.name;
+            document.getElementById('target_name').style.color = next.hex;
+            document.getElementById('target_hint').innerText = `Tip: ${next.hint}`;
+        }
+
+        function updateScoreUI() {
+            document.getElementById('score_display').innerText = gameState.score;
+        }
+
+        function updateHandsHUD() {
+            const leftDot = document.getElementById('left_hand_dot');
+            const leftLabel = document.getElementById('left_color_label');
+            const rightDot = document.getElementById('right_hand_dot');
+            const rightLabel = document.getElementById('right_color_label');
+
+            if (handsData[0].color) {
+                leftDot.style.backgroundColor = handsData[0].color.hex;
+                leftLabel.innerText = handsData[0].color.name;
+                leftLabel.style.color = handsData[0].color.hex;
+            } else {
+                leftDot.style.backgroundColor = '#eee';
+                leftLabel.innerText = 'Tiada Warna';
+                leftLabel.style.color = '#6b7280';
+            }
+
+            if (handsData[1].color) {
+                rightDot.style.backgroundColor = handsData[1].color.hex;
+                rightLabel.innerText = handsData[1].color.name;
+                rightLabel.style.color = handsData[1].color.hex;
+            } else {
+                rightDot.style.backgroundColor = '#eee';
+                rightLabel.innerText = 'Tiada Warna';
+                rightLabel.style.color = '#6b7280';
+            }
+        }
+
+        // Semak interaksi sentuhan jari dengan titisan warna & cantuman dua jari di tengah
+        function checkInteractions() {
+            if (!gameState.isPlaying) return;
+            if (gameState.mixCooldown > 0) gameState.mixCooldown--;
+
+            // 1. Semak sentuhan setiap jari telunjuk pada titisan warna asas
+            handsData.forEach((hand) => {
+                if (!hand.active) return;
+
+                // Lukis jejak cat air pada kanvas luar skrin jika jari mempunyai warna
+                if (hand.color) {
+                    drawWatercolorStroke(hand.prevX, hand.prevY, hand.x, hand.y, hand.color);
+                }
+
+                // Semak pelanggaran dengan setiap titisan warna
+                droplets.forEach((drop) => {
+                    const dist = Math.hypot(hand.x - drop.x, hand.y - drop.y);
+                    if (dist < drop.radius + 22) {
+                        if (!hand.color || hand.color.id !== drop.color.id) {
+                            hand.color = drop.color;
+                            playPickupSound();
+                            spawnSplash(drop.x, drop.y, drop.color.hex, 18);
+                            updateHandsHUD();
+                        }
+                    }
+                });
+            });
+
+            // 2. Semak jika kedua-dua jari aktif dan dicantumkan berhampiran zon tengah skrin
+            const hLeft = handsData[0];
+            const hRight = handsData[1];
+
+            if (hLeft.active && hRight.active && gameState.mixCooldown === 0) {
+                const fingerDist = Math.hypot(hLeft.x - hRight.x, hLeft.y - hRight.y);
+                const midX = (hLeft.x + hRight.x) / 2;
+                const midY = (hLeft.y + hRight.y) / 2;
+
+                // Zon tengah skrin (lingkungan 35% dari pusat)
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
+                const distFromCenter = Math.hypot(midX - centerX, midY - centerY);
+                const mixZoneRadius = Math.min(canvas.width, canvas.height) * 0.28;
+
+                // Jika kedua-dua jari bercantum rapat (< 85px) di kawasan tengah
+                if (fingerDist < 85 && distFromCenter < mixZoneRadius) {
+                    if (hLeft.color && hRight.color) {
+                        evaluateColorMix(hLeft.color, hRight.color, midX, midY);
+                    }
+                }
+            }
+        }
+
+        function evaluateColorMix(colorA, colorB, x, y) {
+            gameState.mixCooldown = 45; // Elak pencetusan berganda dalam 0.75 saat
+
+            // Jika kedua-dua tangan memegang warna yang sama
+            if (colorA.id === colorB.id) {
+                playWrongMixSound();
+                spawnSplash(x, y, colorA.hex, 20);
+                floatingTexts.push({
+                    x, y: y - 30,
+                    text: 'Pilih dua warna BERBEZA!',
+                    color: '#ffffff',
+                    bg: '#ef4444',
+                    life: 60
+                });
+                return;
+            }
+
+            // Cari warna sekunder yang terhasil daripada gabungan colorA + colorB
+            const pair = [colorA.id, colorB.id];
+            const resultSecondary = SECONDARY_COLORS.find(sec =>
+                sec.recipe.includes(pair[0]) && sec.recipe.includes(pair[1])
+            );
+
+            if (resultSecondary) {
+                // Semak sama ada menepati permintaan kanvas lukisan
+                if (resultSecondary.id === gameState.currentTarget.id) {
+                    // BERJAYA!
+                    gameState.score += 1;
+                    updateScoreUI();
+                    playSuccessSound();
+
+                    // Percikan besar warna sekunder & bintang
+                    spawnSplash(x, y, resultSecondary.hex, 55);
+                    drawBigPaintSplatter(x, y, resultSecondary.hex);
+
+                    floatingTexts.push({
+                        x, y: y - 40,
+                        text: `⭐ SYABAS! WARNA ${resultSecondary.name}!`,
+                        color: '#ffffff',
+                        bg: resultSecondary.hex,
+                        life: 75
+                    });
+
+                    // Simpan ke dalam galeri hasil campuran
+                    gameState.gallery.push({
+                        color1: colorA,
+                        color2: colorB,
+                        result: resultSecondary,
+                        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                    });
+
+                    // Kosongkan warna pada jari untuk pusingan seterusnya & tukar misi
+                    handsData[0].color = null;
+                    handsData[1].color = null;
+                    updateHandsHUD();
+                    pickNewTarget();
+                } else {
+                    // Campuran sah tetapi bukan warna yang diminta oleh kanvas
+                    playWrongMixSound();
+                    spawnSplash(x, y, resultSecondary.hex, 30);
+                    floatingTexts.push({
+                        x, y: y - 35,
+                        text: `Itu warna ${resultSecondary.name}! Kanvas mahu ${gameState.currentTarget.name}!`,
+                        color: '#1e1b4b',
+                        bg: '#fde047',
+                        life: 75
+                    });
+                    handsData[0].color = null;
+                    handsData[1].color = null;
+                    updateHandsHUD();
+                }
+            }
+        }
+
+        function endGame() {
+            gameState.isPlaying = false;
+            clearInterval(gameState.timerInterval);
+
+            document.getElementById('hud_layer').classList.add('hidden');
+            document.getElementById('end_screen').classList.remove('hidden');
+            document.getElementById('final_score').innerText = `${gameState.score} Bintang`;
+            document.getElementById('gallery_count').innerText = `${gameState.gallery.length} Karya`;
+
+            renderGallery();
+        }
+
+        function renderGallery() {
+            const grid = document.getElementById('gallery_grid');
+            grid.innerHTML = '';
+
+            if (gameState.gallery.length === 0) {
+                grid.innerHTML = `
+                    <div class="col-span-full py-6 text-center text-gray-500 font-medium">
+                        Belum ada campuran berjaya direkodkan. Cuba lagi untuk penuhkan galeri seni kamu! 🎨
+                    </div>
+                `;
+                return;
+            }
+
+            gameState.gallery.forEach((item, index) => {
+                const card = document.createElement('div');
+                card.className = 'bg-white rounded-2xl p-3 shadow-md border-2 border-indigo-100 flex flex-col items-center text-center animate-pop-in';
+                card.innerHTML = `
+                    <div class="text-xs font-bold text-gray-400 mb-1">Karya #${index + 1}</div>
+                    <div class="w-14 h-14 rounded-full shadow-inner border-4 border-white mb-2 flex items-center justify-center text-white font-bold text-lg" style="background-color: ${item.result.hex};">
+                        ✨
+                    </div>
+                    <div class="font-extrabold text-sm" style="color: ${item.result.hex};">${item.result.name}</div>
+                    <div class="flex items-center gap-1 mt-1.5 bg-gray-100 px-2 py-1 rounded-full text-xs font-bold text-gray-700">
+                        <span class="w-3 h-3 rounded-full inline-block" style="background:${item.color1.hex}"></span>
+                        <span>+</span>
+                        <span class="w-3 h-3 rounded-full inline-block" style="background:${item.color2.hex}"></span>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        /**
+         * ============================================================================
+         * 8. KESAN VISUAL CAT AIR, PERCIKAN & LUKISAN GELUNG UTAMA (RENDER LOOP)
+         * ============================================================================
+         */
+        function drawWatercolorStroke(x1, y1, x2, y2, colorObj) {
+            const dist = Math.hypot(x2 - x1, y2 - y1);
+            if (dist < 1 || dist > 250) return;
+
+            paintCtx.save();
+            paintCtx.lineCap = 'round';
+            paintCtx.lineJoin = 'round';
+
+            // Lapisan cat air lutsinar bertindih untuk tekstur organik
+            paintCtx.strokeStyle = `rgba(${colorObj.rgb[0]}, ${colorObj.rgb[1]}, ${colorObj.rgb[2]}, 0.28)`;
+            paintCtx.lineWidth = 26;
+            paintCtx.beginPath();
+            paintCtx.moveTo(x1, y1);
+            paintCtx.lineTo(x2, y2);
+            paintCtx.stroke();
+
+            // Teras berus lebih pekat
+            paintCtx.strokeStyle = `rgba(${colorObj.rgb[0]}, ${colorObj.rgb[1]}, ${colorObj.rgb[2]}, 0.45)`;
+            paintCtx.lineWidth = 12;
+            paintCtx.beginPath();
+            paintCtx.moveTo(x1, y1);
+            paintCtx.lineTo(x2, y2);
+            paintCtx.stroke();
+
+            // Percikan kecil semasa melukis laju
+            if (dist > 15 && Math.random() > 0.5) {
+                paintCtx.fillStyle = `rgba(${colorObj.rgb[0]}, ${colorObj.rgb[1]}, ${colorObj.rgb[2]}, 0.4)`;
+                paintCtx.beginPath();
+                paintCtx.arc(x2 + (Math.random() - 0.5) * 30, y2 + (Math.random() - 0.5) * 30, Math.random() * 6 + 2, 0, Math.PI * 2);
+                paintCtx.fill();
+            }
+            paintCtx.restore();
+        }
+
+        function drawBigPaintSplatter(x, y, hexColor) {
+            paintCtx.save();
+            paintCtx.fillStyle = hexColor;
+            paintCtx.globalAlpha = 0.55;
+            for (let i = 0; i < 16; i++) {
+                const angle = (Math.PI * 2 * i) / 16 + Math.random() * 0.3;
+                const r = Math.random() * 65 + 15;
+                const blobSize = Math.random() * 24 + 10;
+                paintCtx.beginPath();
+                paintCtx.arc(x + Math.cos(angle) * r, y + Math.sin(angle) * r, blobSize, 0, Math.PI * 2);
+                paintCtx.fill();
+            }
+            paintCtx.restore();
+        }
+
+        function spawnSplash(x, y, hexColor, count = 25) {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 9 + 3;
+                particles.push({
+                    x, y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed - 2,
+                    radius: Math.random() * 8 + 4,
+                    color: hexColor,
+                    alpha: 1,
+                    decay: Math.random() * 0.025 + 0.015
+                });
+            }
+        }
+
+        function renderLoop() {
+            const w = canvas.width;
+            const h = canvas.height;
+            gameState.pulsePhase += 0.05;
+
+            ctx.clearRect(0, 0, w, h);
+
+            // 1. Lukis Latar Belakang (Suapan Webcam Masa Nyata atau Latar Studio)
+            if (!gameState.isDemoMode && gameState.cameraReady && videoElement.readyState >= 2) {
+                ctx.save();
+                ctx.translate(w, 0);
+                ctx.scale(-1, 1); // Cerminkan video webcam
+                ctx.drawImage(videoElement, 0, 0, w, h);
+                ctx.restore();
+
+                // Lapisan lembut supaya elemen UI dan warna menonjol
+                ctx.fillStyle = 'rgba(15, 23, 42, 0.22)';
+                ctx.fillRect(0, 0, w, h);
+            } else {
+                // Latar belakang gradien studio seni jika dalam mod simulasi
+                const grad = ctx.createRadialGradient(w / 2, h / 2, 50, w / 2, h / 2, w * 0.8);
+                grad.addColorStop(0, '#eef2ff');
+                grad.addColorStop(1, '#c7d2fe');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, w, h);
+            }
+
+            // 2. Pudarkan sedikit jejak cat air secara beransur-ansur supaya skrin sentiasa kemas
+            if (gameState.isPlaying) {
+                paintCtx.save();
+                paintCtx.globalCompositeOperation = 'destination-out';
+                paintCtx.fillStyle = 'rgba(0, 0, 0, 0.018)';
+                paintCtx.fillRect(0, 0, w, h);
+                paintCtx.restore();
+
+                // Paparkan lapisan jejak cat air
+                ctx.drawImage(paintCanvas, 0, 0);
+            }
+
+            // 3. Lukis Zon Cantuman di Tengah Skrin
+            if (gameState.isPlaying) {
+                const centerX = w / 2;
+                const centerY = h / 2;
+                const zoneRadius = Math.min(w, h) * 0.22 + Math.sin(gameState.pulsePhase) * 6;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, zoneRadius, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
+                ctx.fill();
+                ctx.lineWidth = 4;
+                ctx.setLineDash([12, 10]);
+                ctx.strokeStyle = gameState.currentTarget.hex;
+                ctx.stroke();
+
+                // Label panduan di tengah zon
+                ctx.setLineDash([]);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                ctx.font = 'bold 16px Fredoka, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Cantumkan 2 Jari Di Sini!', centerX, centerY + zoneRadius + 24);
+                ctx.restore();
+            }
+
+            // 4. Lukis Titisan Warna Asas (Merah, Kuning, Biru)
+            if (gameState.isPlaying) {
+                droplets.forEach((drop) => {
+                    const bobY = drop.y + Math.sin(gameState.pulsePhase + drop.bobOffset) * 7;
+
+                    ctx.save();
+                    // Cahaya luar (Glow)
+                    ctx.shadowColor = drop.color.glow;
+                    ctx.shadowBlur = 20;
+
+                    // Bentuk titisan / bulatan cat berkilat
+                    ctx.beginPath();
+                    ctx.arc(drop.x, bobY, drop.radius, 0, Math.PI * 2);
+                    ctx.fillStyle = drop.color.hex;
+                    ctx.fill();
+
+                    ctx.lineWidth = 5;
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.stroke();
+
+                    // Kilauan cahaya (Highlight)
+                    ctx.shadowBlur = 0;
+                    ctx.beginPath();
+                    ctx.arc(drop.x - drop.radius * 0.3, bobY - drop.radius * 0.3, drop.radius * 0.22, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+                    ctx.fill();
+
+                    // Nama warna
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 15px Fredoka, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(drop.color.name, drop.x, bobY + drop.radius + 20);
+                    ctx.restore();
+                });
+
+                // Jalankan semakan interaksi
+                checkInteractions();
+            }
+
+            // 5. Lukis Penunjuk Berus pada Kedua-dua Jari Telunjuk
+            handsData.forEach((hand) => {
+                if (!hand.active) return;
+
+                ctx.save();
+                const brushColor = hand.color ? hand.color.hex : '#ffffff';
+
+                // Lingkaran berus
+                ctx.beginPath();
+                ctx.arc(hand.x, hand.y, 20, 0, Math.PI * 2);
+                ctx.fillStyle = brushColor;
+                ctx.shadowColor = brushColor;
+                ctx.shadowBlur = 15;
+                ctx.fill();
+
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = '#1e1b4b';
+                ctx.stroke();
+
+                // Ikon berus kecil di tengah
+                ctx.shadowBlur = 0;
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🖌️', hand.x, hand.y);
+                ctx.restore();
+            });
+
+            // 6. Kemas Kini & Lukis Zarah Percikan Warna-Warni
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.25; // Graviti ringan
+                p.alpha -= p.decay;
+
+                if (p.alpha <= 0) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+
+                ctx.save();
+                ctx.globalAlpha = p.alpha;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // 7. Lukis Teks Maklum Balas Terapung
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                const ft = floatingTexts[i];
+                ft.y -= 1.2;
+                ft.life--;
+
+                if (ft.life <= 0) {
+                    floatingTexts.splice(i, 1);
+                    continue;
+                }
+
+                ctx.save();
+                ctx.globalAlpha = Math.min(1, ft.life / 20);
+                ctx.font = 'bold 20px Fredoka, sans-serif';
+                const textWidth = ctx.measureText(ft.text).width;
+
+                // Latar pil teks
+                ctx.fillStyle = ft.bg;
+                ctx.beginPath();
+                ctx.roundRect(ft.x - textWidth / 2 - 16, ft.y - 20, textWidth + 32, 36, 18);
+                ctx.fill();
+
+                ctx.fillStyle = ft.color;
+                ctx.textAlign = 'center';
+                ctx.fillText(ft.text, ft.x, ft.y + 4);
+                ctx.restore();
+            }
+
+            requestAnimationFrame(renderLoop);
+        }
+
+        // Mulakan aplikasi selepas halaman dimuatkan sepenuhnya
+        window.onload = function () {
+            resizeCanvases();
+            setupDemoControls();
+            initMediaPipe();
+            renderLoop();
+        };
+    </script>
+</body>
+</html>
